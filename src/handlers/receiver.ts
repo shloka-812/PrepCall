@@ -11,7 +11,7 @@
 import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { exchangeCodeForTokens, verifyState, getCallbackUrl } from '../auth/oauth.js';
-import { isUserAuthed, getUserProfile, setUserProfile, getPendingAuth } from '../auth/store.js';
+import { isUserAuthed, getUserProfile, setUserProfile, clearGranolaTokens } from '../auth/store.js';
 import { generateAuthUrl } from '../auth/oauth.js';
 import { sendMessage, markAsRead, startTyping } from '../linq/client.js';
 import {
@@ -26,7 +26,7 @@ const SQS_QUEUE_URL = process.env.SQS_QUEUE_URL!;
 const BASE_URL = process.env.BASE_URL!;
 
 // Inline HTML pages (imported from routes in local dev, inlined here for Lambda)
-const SUCCESS_HTML = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connected</title><link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@700&family=Inter:wght@400;500&display=swap" rel="stylesheet"><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Inter',system-ui,sans-serif;background:#0a0a0b;color:#f0f0f0;min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:24px}.card{text-align:center;max-width:420px}h1{font-family:'Urbanist',sans-serif;font-size:32px;font-weight:700;margin-bottom:12px}p{font-size:15px;color:#8a8a8e;line-height:1.6;margin-bottom:8px}.check{width:64px;height:64px;border-radius:50%;background:#f0f0f0;color:#0a0a0b;display:flex;align-items:center;justify-content:center;margin:0 auto 24px;font-size:28px}.cta{margin-top:32px;display:inline-block;background:#f0f0f0;color:#0a0a0b;font-size:14px;font-weight:600;padding:12px 28px;border-radius:10px;text-decoration:none}.footer{margin-top:48px;font-size:12px;color:#8a8a8e;opacity:.5}</style></head><body><div class="card"><div class="check">&#10003;</div><h1>Connected</h1><p>Your Granola account is linked.</p><p>Head back to iMessage and ask about your meetings.</p><a href="sms:" class="cta">Open iMessage</a><div class="footer">Powered by Linq Blue × Granola MCP</div></div></body></html>`;
+const SUCCESS_HTML = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connected</title><link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@700&family=Inter:wght@400;500&display=swap" rel="stylesheet"><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Inter',system-ui,sans-serif;background:#0a0a0b;color:#f0f0f0;min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:24px}.card{text-align:center;max-width:420px}h1{font-family:'Urbanist',sans-serif;font-size:32px;font-weight:700;margin-bottom:12px}p{font-size:15px;color:#8a8a8e;line-height:1.6;margin-bottom:8px}.check{width:64px;height:64px;border-radius:50%;background:#f0f0f0;color:#0a0a0b;display:flex;align-items:center;justify-content:center;margin:0 auto 24px;font-size:28px}.cta{margin-top:32px;display:inline-block;background:#f0f0f0;color:#0a0a0b;font-size:14px;font-weight:600;padding:12px 28px;border-radius:10px;text-decoration:none}.footer{margin-top:48px;font-size:12px;color:#8a8a8e;opacity:.5}</style></head><body><div class="card"><div class="check">&#10003;</div><h1>Connected</h1><p>Your Granola account is linked.</p><p>Head back to iMessage and ask about your meetings.</p><a href="sms:+16504447005" class="cta">Open iMessage</a><div class="footer">Powered by Linq Blue × Granola MCP</div></div></body></html>`;
 const ERROR_HTML = (msg: string) => `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Error</title><style>body{font-family:system-ui;background:#0a0a0b;color:#f0f0f0;display:flex;align-items:center;justify-content:center;min-height:100vh}h1{font-size:24px;margin-bottom:8px}p{color:#8a8a8e}</style></head><body><div style="text-align:center"><h1>Auth Failed</h1><p>${msg}</p><p>Go back to iMessage and try again.</p></div></body></html>`;
 
 const botNumbers = process.env.LINQ_AGENT_BOT_NUMBERS?.split(',').map(p => p.trim()).filter(Boolean) || [];
@@ -65,16 +65,16 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     const result = await exchangeCodeForTokens(code, phoneNumber, BASE_URL);
 
     if (result.success) {
-      // Send welcome message (fire and forget)
+      // Send welcome message before returning HTML (Lambda freezes after response)
       const profile = await getUserProfile(phoneNumber);
       if (profile?.chatId) {
-        startTyping(profile.chatId).catch(() => {});
-        setTimeout(async () => {
-          try {
-            await sendMessage(profile.chatId!, "youre all connected! your granola account is linked and ready to go", { type: 'screen', name: 'confetti' });
-            await sendMessage(profile.chatId!, "just text me anytime to ask about your meetings — summaries, action items, transcripts, whatever you need");
-          } catch {}
-        }, 500);
+        try {
+          await startTyping(profile.chatId);
+          await sendMessage(profile.chatId, "youre all connected! your granola account is linked and ready to go", { type: 'screen', name: 'confetti' });
+          await sendMessage(profile.chatId, "just text me anytime to ask about your meetings — summaries, action items, transcripts, whatever you need");
+        } catch (err) {
+          console.error('[receiver] Failed to send welcome message:', err);
+        }
       }
       return { statusCode: 200, headers: secHeaders, body: SUCCESS_HTML };
     }
@@ -114,6 +114,17 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
 
     // Mark as read + start typing immediately
     await Promise.all([markAsRead(chatId), startTyping(chatId)]);
+
+    // Handle signout — slash commands or natural language
+    const cmd = text.toLowerCase().trim();
+    const isSignout = cmd === '/signout' || cmd === '/logout' || cmd === '/disconnect'
+      || /\b(sign\s*out|log\s*out|disconnect|unlink|remove\s*auth|deauth)\b/.test(cmd);
+    if (isSignout && await isUserAuthed(from)) {
+      await clearGranolaTokens(from);
+      await sendMessage(chatId, "done — your granola account has been disconnected. text me anytime to reconnect");
+      console.log(`[receiver] User ${from} signed out`);
+      return { statusCode: 200, body: '{"action":"signed_out"}' };
+    }
 
     // If user isn't authed, send auth link directly (no need to enqueue)
     if (!(await isUserAuthed(from))) {

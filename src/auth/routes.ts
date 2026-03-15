@@ -136,7 +136,7 @@ const SUCCESS_PAGE = `<!DOCTYPE html>
     <h1>Connected</h1>
     <p>Your Granola account is linked to your Linq agent.</p>
     <p>Head back to iMessage — just text any question about your meetings.</p>
-    <a href="sms:" class="cta">Open iMessage</a>
+    <a href="sms:+16504447005" class="cta">Open iMessage</a>
     <div class="footer">Powered by Linq Blue &times; Granola MCP</div>
   </div>
   <script>
