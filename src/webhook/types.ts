@@ -1,8 +1,9 @@
-// Linq Blue V3 Webhook Types
+// Linq Blue V3 Webhook Types (2026-02-03 payload version)
 // Ref: https://apidocs.linqapp.com/webhook-events
 
 export interface WebhookEvent {
   api_version: 'v3';
+  webhook_version?: string;
   event_id: string;
   created_at: string;
   trace_id: string;
@@ -11,31 +12,56 @@ export interface WebhookEvent {
   data: unknown;
 }
 
+export interface HandleInfo {
+  handle: string;
+  id: string;
+  is_me: boolean;
+  joined_at: string;
+  left_at: string | null;
+  service: 'iMessage' | 'SMS' | 'RCS';
+  status: string;
+}
+
+export interface ChatInfo {
+  id: string;
+  is_group: boolean;
+  owner_handle: HandleInfo;
+}
+
+export interface MessageReceivedData {
+  // New 2026-02-03 payload format
+  chat: ChatInfo;
+  sender_handle: HandleInfo;
+  id: string;
+  direction: 'inbound' | 'outbound';
+  parts: MessagePart[];
+  effect: MessageEffect | null;
+  reply_to: ReplyTo | null;
+  sent_at: string;
+  service: 'iMessage' | 'SMS' | 'RCS';
+
+  // Legacy fields (older webhook versions)
+  chat_id?: string;
+  from?: string;
+  recipient_phone?: string;
+  is_from_me?: boolean;
+  message?: {
+    id: string;
+    parts: MessagePart[];
+    effect?: MessageEffect;
+    reply_to?: ReplyTo;
+  };
+}
+
 export interface MessageReceivedEvent extends WebhookEvent {
   event_type: 'message.received';
   data: MessageReceivedData;
 }
 
-export interface MessageReceivedData {
-  chat_id: string;
-  from: string;
-  recipient_phone: string;
-  received_at: string;
-  is_from_me: boolean;
-  service: 'iMessage' | 'SMS' | 'RCS';
-  message: IncomingMessage;
-}
-
-export interface IncomingMessage {
-  id: string;
-  parts: MessagePart[];
-  effect?: MessageEffect;
-  reply_to?: ReplyTo;
-}
-
 export interface TextPart {
   type: 'text';
   value: string;
+  text_decorations?: unknown;
 }
 
 export interface MediaPart {
@@ -61,6 +87,39 @@ export interface ReplyTo {
 
 export function isMessageReceivedEvent(event: WebhookEvent): event is MessageReceivedEvent {
   return event.event_type === 'message.received';
+}
+
+/**
+ * Extract fields from webhook data, handling both new and legacy formats.
+ */
+export function extractEventFields(data: MessageReceivedData) {
+  // New format (2026-02-03)
+  if (data.chat && data.sender_handle) {
+    return {
+      chatId: data.chat.id,
+      from: data.sender_handle.handle,
+      recipientPhone: data.chat.owner_handle.handle,
+      isFromMe: data.sender_handle.is_me,
+      messageId: data.id,
+      parts: data.parts,
+      effect: data.effect ?? undefined,
+      replyTo: data.reply_to ?? undefined,
+      service: data.service || data.sender_handle.service,
+    };
+  }
+
+  // Legacy format
+  return {
+    chatId: data.chat_id!,
+    from: data.from!,
+    recipientPhone: data.recipient_phone!,
+    isFromMe: data.is_from_me!,
+    messageId: data.message!.id,
+    parts: data.message!.parts,
+    effect: data.message?.effect,
+    replyTo: data.message?.reply_to,
+    service: data.service,
+  };
 }
 
 export function extractTextContent(parts: MessagePart[]): string {

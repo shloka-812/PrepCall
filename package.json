@@ -1,40 +1,42 @@
 {
-  "name": "linq-blue-agent-example",
+  "name": "granola-agent",
   "version": "1.0.0",
-  "description": "Example AI agent built on Linq Messaging API - showcases Claude AI integration with iMessage, web search, image generation, and more",
+  "description": "Granola meeting notes agent — query your meetings via iMessage, built on Linq Blue and Claude with Granola MCP",
   "main": "dist/index.js",
-  "author": "Linq Technologies Incorporated",
+  "author": "George McCain",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/linq-team/ai-agent-example.git"
+    "url": "https://github.com/linq-team/granola-agent.git"
   },
   "keywords": [
+    "granola",
+    "meeting-notes",
     "linq",
     "linq-blue",
     "imessage",
     "claude",
     "anthropic",
+    "mcp",
     "ai",
-    "chatbot",
-    "sms",
-    "messaging",
-    "api",
-    "example",
+    "agent",
     "typescript"
   ],
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "auth": "tsx src/granola/auth.ts",
+    "test:granola": "tsx src/test-granola.ts",
+    "chat": "tsx src/cli.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
     "@aws-sdk/client-dynamodb": "^3.971.0",
     "@aws-sdk/lib-dynamodb": "^3.971.0",
+    "@modelcontextprotocol/sdk": "^1.12.1",
     "dotenv": "^17.2.3",
-    "express": "^4.21.0",
-    "openai": "^6.16.0"
+    "express": "^4.21.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",

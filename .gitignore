@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .env
+.granola-tokens.json
 *.log
 
 # Local dev notes (contains internal ARNs, phone numbers, etc.)
