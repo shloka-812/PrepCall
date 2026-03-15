@@ -2,7 +2,7 @@
  * Auth routes — OAuth callback handler.
  */
 import { Router, Request, Response } from 'express';
-import { exchangeCodeForTokens } from './oauth.js';
+import { exchangeCodeForTokens, verifyState } from './oauth.js';
 import { isUserAuthed } from './store.js';
 
 type OnAuthComplete = (phoneNumber: string) => Promise<void> | void;
@@ -193,7 +193,30 @@ const ERROR_PAGE = (errorMsg: string) => `<!DOCTYPE html>
 export function createAuthRoutes(getBaseUrl: () => string, onAuthComplete?: OnAuthComplete): Router {
   const router = Router();
 
+  // Rate limit: max 10 callback attempts per IP per 5 minutes
+  const callbackAttempts = new Map<string, { count: number; resetAt: number }>();
+
   router.get('/auth/callback', async (req: Request, res: Response) => {
+    // Security headers
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'unsafe-inline'; frame-ancestors 'none'");
+
+    // Rate limiting
+    const clientIp = String(req.headers['x-forwarded-for'] || req.ip || 'unknown');
+    const now = Date.now();
+    const limit = callbackAttempts.get(clientIp);
+    if (limit && now < limit.resetAt) {
+      limit.count++;
+      if (limit.count > 10) {
+        console.warn(`[auth] Rate limited: ${clientIp}`);
+        res.status(429).send(ERROR_PAGE('Too many attempts. Try again in a few minutes.'));
+        return;
+      }
+    } else {
+      callbackAttempts.set(clientIp, { count: 1, resetAt: now + 5 * 60 * 1000 });
+    }
+
     const code = String(req.query.code || '');
     const state = String(req.query.state || '');
     const error = String(req.query.error || '');
@@ -209,7 +232,13 @@ export function createAuthRoutes(getBaseUrl: () => string, onAuthComplete?: OnAu
       return;
     }
 
-    const phoneNumber = state;
+    // Verify signed state token — prevents someone from forging the phone number
+    const phoneNumber = verifyState(state);
+    if (!phoneNumber) {
+      console.error(`[auth] Invalid state token — possible tampering`);
+      res.status(400).send(ERROR_PAGE('Invalid authorization state'));
+      return;
+    }
     console.log(`[auth] Callback received for ${phoneNumber}`);
 
     const result = await exchangeCodeForTokens(code, phoneNumber, getBaseUrl());

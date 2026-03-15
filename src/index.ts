@@ -3,7 +3,7 @@ import express from 'express';
 import { createWebhookHandler } from './webhook/handler.js';
 import { sendMessage, markAsRead, startTyping, sendReaction, getChat } from './linq/client.js';
 import { chat } from './claude/client.js';
-import { isUserAuthed, getUserAuth, setUserAuth } from './auth/store.js';
+import { isUserAuthed, getUserProfile, setUserProfile } from './auth/store.js';
 import { generateAuthUrl } from './auth/oauth.js';
 import { createAuthRoutes } from './auth/routes.js';
 
@@ -39,19 +39,19 @@ const authRoutes = createAuthRoutes(
   async (phoneNumber: string) => {
     console.log(`[main] User ${phoneNumber} just authenticated!`);
 
-    const auth = getUserAuth(phoneNumber);
-    if (auth?.chatId) {
+    const profile = await getUserProfile(phoneNumber);
+    if (profile?.chatId) {
       try {
-        await startTyping(auth.chatId);
+        await startTyping(profile.chatId);
         await new Promise(r => setTimeout(r, 500));
         await sendMessage(
-          auth.chatId,
+          profile.chatId,
           "youre all connected! your granola account is linked and ready to go",
           { type: 'screen', name: 'confetti' },
         );
         await new Promise(r => setTimeout(r, 600));
         await sendMessage(
-          auth.chatId,
+          profile.chatId,
           "just text me anytime to ask about your meetings — summaries, action items, transcripts, whatever you need",
         );
         console.log(`[main] Welcome message sent to ${phoneNumber}`);
@@ -74,24 +74,13 @@ app.post(
     await Promise.all([markAsRead(chatId), startTyping(chatId)]);
 
     // Check if user has linked their Granola account
-    if (!isUserAuthed(from)) {
+    if (!(await isUserAuthed(from))) {
       console.log(`[main] User ${from} not authed — sending auth link`);
 
       // Store chatId so we can message them after auth completes
-      const existingAuth = getUserAuth(from);
-      if (existingAuth) {
-        existingAuth.chatId = chatId;
-        setUserAuth(from, existingAuth);
-      }
+      await setUserProfile(from, { chatId });
 
-      const authUrl = await generateAuthUrl(from, publicBaseUrl);
-
-      // Store chatId on freshly created auth entry too
-      const auth = getUserAuth(from);
-      if (auth && !auth.chatId) {
-        auth.chatId = chatId;
-        setUserAuth(from, auth);
-      }
+      const authUrl = await generateAuthUrl(from, publicBaseUrl, chatId);
 
       await sendMessage(chatId, 'hey! i need to connect to your granola account to access your meeting notes');
       await new Promise(r => setTimeout(r, 500));

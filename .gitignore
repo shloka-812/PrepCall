@@ -2,7 +2,10 @@ node_modules/
 dist/
 .env
 .granola-tokens.json
+samconfig.toml
+dist/
 *.log
+*.png
 
 # Local dev notes (contains internal ARNs, phone numbers, etc.)
 CLAUDE.md

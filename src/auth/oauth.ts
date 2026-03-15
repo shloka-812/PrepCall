@@ -1,41 +1,61 @@
 /**
- * Granola OAuth 2.0 with Dynamic Client Registration + PKCE
- *
- * Flow:
- * 1. Register dynamic client with Granola's DCR endpoint
- * 2. Generate PKCE challenge
- * 3. Build auth URL with state=phoneNumber
- * 4. User clicks link in iMessage, logs in via browser
- * 5. Callback hits /auth/callback with code + state
- * 6. Exchange code for tokens
- * 7. Store tokens for user
+ * Granola OAuth 2.0 with Dynamic Client Registration + PKCE.
  */
 import crypto from 'node:crypto';
-import { getUserAuth, setUserAuth, updateUserTokens, type UserAuth } from './store.js';
+import { getPendingAuth, setPendingAuth, clearPendingAuth, setGranolaTokens, setJustOnboarded, setUserProfile } from './store.js';
 
 const AUTH_SERVER = 'https://mcp-auth.granola.ai';
 const MCP_RESOURCE = 'https://mcp.granola.ai/mcp';
 
-// Cached DCR client (shared across users since Granola allows it)
+// HMAC key for signing state tokens — derived from CREDENTIAL_ENCRYPTION_KEY or random
+const STATE_HMAC_KEY = process.env.CREDENTIAL_ENCRYPTION_KEY
+  ? crypto.createHash('sha256').update(`state-signing:${process.env.CREDENTIAL_ENCRYPTION_KEY}`).digest()
+  : crypto.randomBytes(32);
+
+/**
+ * Sign a phone number into a tamper-proof state token.
+ * Format: "base64url(phone).base64url(hmac)"
+ */
+export function signState(phoneNumber: string): string {
+  const payload = Buffer.from(phoneNumber).toString('base64url');
+  const sig = crypto.createHmac('sha256', STATE_HMAC_KEY).update(payload).digest('base64url');
+  return `${payload}.${sig}`;
+}
+
+/**
+ * Verify and extract phone number from a signed state token.
+ * Returns null if the signature is invalid (tampered).
+ */
+export function verifyState(state: string): string | null {
+  const parts = state.split('.');
+  if (parts.length !== 2) return null;
+
+  const [payload, sig] = parts;
+  const expectedSig = crypto.createHmac('sha256', STATE_HMAC_KEY).update(payload).digest('base64url');
+
+  if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expectedSig))) {
+    console.error('[oauth] State signature mismatch — possible tampering');
+    return null;
+  }
+
+  return Buffer.from(payload, 'base64url').toString('utf8');
+}
+
 let registeredClient: { clientId: string; clientSecret?: string } | null = null;
 
 /**
  * Get the callback URL for OAuth.
- * For local dev, always use localhost (browser is on the same machine).
- * For production (Lambda), use the public API Gateway URL.
  */
 export function getCallbackUrl(baseUrl: string): string {
   const port = process.env.PORT || 3000;
   if (process.env.NODE_ENV === 'production') {
     return `${baseUrl}/auth/callback`;
   }
-  // Local dev: browser redirect goes to localhost directly (avoids ngrok SSL issues)
   return `http://localhost:${port}/auth/callback`;
 }
 
 /**
  * Register a dynamic client with Granola's OAuth server (DCR).
- * Only needs to happen once — we reuse the client for all users.
  */
 async function ensureClientRegistered(callbackUrl: string): Promise<{ clientId: string; clientSecret?: string }> {
   if (registeredClient) return registeredClient;
@@ -67,9 +87,6 @@ async function ensureClientRegistered(callbackUrl: string): Promise<{ clientId: 
   return registeredClient;
 }
 
-/**
- * Generate PKCE code_verifier and code_challenge.
- */
 function generatePKCE(): { verifier: string; challenge: string } {
   const verifier = crypto.randomBytes(32).toString('base64url');
   const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
@@ -79,28 +96,22 @@ function generatePKCE(): { verifier: string; challenge: string } {
 /**
  * Generate the Granola OAuth URL for a user and store the PKCE verifier.
  */
-export async function generateAuthUrl(phoneNumber: string, baseUrl: string): Promise<string> {
+export async function generateAuthUrl(phoneNumber: string, baseUrl: string, chatId?: string): Promise<string> {
   const callbackUrl = getCallbackUrl(baseUrl);
   const client = await ensureClientRegistered(callbackUrl);
   const pkce = generatePKCE();
 
-  // Store the PKCE verifier so we can use it during token exchange
-  const now = Date.now();
-  const existing = getUserAuth(phoneNumber);
-  if (existing) {
-    existing.codeVerifier = pkce.verifier;
-    existing.updatedAt = now;
-    setUserAuth(phoneNumber, existing);
-  } else {
-    setUserAuth(phoneNumber, {
-      phoneNumber,
-      accessToken: '',
-      clientId: client.clientId,
-      clientSecret: client.clientSecret,
-      codeVerifier: pkce.verifier,
-      createdAt: now,
-      updatedAt: now,
-    });
+  // Store PKCE verifier + client info (with TTL)
+  await setPendingAuth(phoneNumber, {
+    codeVerifier: pkce.verifier,
+    clientId: client.clientId,
+    clientSecret: client.clientSecret,
+    chatId,
+  });
+
+  // Store user profile with chatId
+  if (chatId) {
+    await setUserProfile(phoneNumber, { chatId });
   }
 
   const params = new URLSearchParams({
@@ -109,7 +120,7 @@ export async function generateAuthUrl(phoneNumber: string, baseUrl: string): Pro
     redirect_uri: callbackUrl,
     code_challenge: pkce.challenge,
     code_challenge_method: 'S256',
-    state: phoneNumber,
+    state: signState(phoneNumber),
     scope: 'openid email profile offline_access',
     resource: MCP_RESOURCE,
   });
@@ -121,7 +132,6 @@ export async function generateAuthUrl(phoneNumber: string, baseUrl: string): Pro
 
 /**
  * Exchange authorization code for tokens.
- * Called from the /auth/callback route.
  */
 export async function exchangeCodeForTokens(
   code: string,
@@ -129,13 +139,13 @@ export async function exchangeCodeForTokens(
   baseUrl: string,
 ): Promise<{ success: boolean; error?: string }> {
   const callbackUrl = getCallbackUrl(baseUrl);
-  const userAuth = getUserAuth(phoneNumber);
+  const pending = await getPendingAuth(phoneNumber);
 
-  if (!userAuth) {
+  if (!pending) {
     return { success: false, error: 'No pending auth for this phone number' };
   }
 
-  if (!userAuth.codeVerifier) {
+  if (!pending.codeVerifier) {
     return { success: false, error: 'No PKCE verifier found — auth may have expired' };
   }
 
@@ -146,7 +156,7 @@ export async function exchangeCodeForTokens(
     code,
     redirect_uri: callbackUrl,
     client_id: client.clientId,
-    code_verifier: userAuth.codeVerifier,
+    code_verifier: pending.codeVerifier,
   };
 
   if (client.clientSecret) {
@@ -171,36 +181,35 @@ export async function exchangeCodeForTokens(
     access_token: string;
     refresh_token?: string;
     expires_in?: number;
-    token_type: string;
   };
 
-  updateUserTokens(
-    phoneNumber,
-    tokens.access_token,
-    tokens.refresh_token,
-    tokens.expires_in,
-  );
+  // Store tokens encrypted
+  await setGranolaTokens(phoneNumber, {
+    accessToken: tokens.access_token,
+    refreshToken: tokens.refresh_token,
+    expiresAt: tokens.expires_in ? Date.now() + tokens.expires_in * 1000 : undefined,
+  });
+
+  // Clean up pending auth
+  await clearPendingAuth(phoneNumber);
+
+  // Set just-onboarded flag (for welcome flow)
+  await setJustOnboarded(phoneNumber);
 
   console.log(`[oauth] Tokens received for ${phoneNumber} (expires in ${tokens.expires_in}s)`);
   return { success: true };
 }
 
 /**
- * Refresh an expired access token using the refresh token.
+ * Refresh an expired access token.
  */
-export async function refreshAccessToken(phoneNumber: string, baseUrl: string): Promise<boolean> {
-  const userAuth = getUserAuth(phoneNumber);
-  if (!userAuth?.refreshToken) {
-    console.log(`[oauth] No refresh token for ${phoneNumber}`);
-    return false;
-  }
-
+export async function refreshAccessToken(phoneNumber: string, baseUrl: string, currentRefreshToken: string): Promise<boolean> {
   const callbackUrl = getCallbackUrl(baseUrl);
   const client = await ensureClientRegistered(callbackUrl);
 
   const body: Record<string, string> = {
     grant_type: 'refresh_token',
-    refresh_token: userAuth.refreshToken,
+    refresh_token: currentRefreshToken,
     client_id: client.clientId,
   };
 
@@ -227,12 +236,11 @@ export async function refreshAccessToken(phoneNumber: string, baseUrl: string): 
     expires_in?: number;
   };
 
-  updateUserTokens(
-    phoneNumber,
-    tokens.access_token,
-    tokens.refresh_token,
-    tokens.expires_in,
-  );
+  await setGranolaTokens(phoneNumber, {
+    accessToken: tokens.access_token,
+    refreshToken: tokens.refresh_token,
+    expiresAt: tokens.expires_in ? Date.now() + tokens.expires_in * 1000 : undefined,
+  });
 
   console.log(`[oauth] Token refreshed for ${phoneNumber}`);
   return true;

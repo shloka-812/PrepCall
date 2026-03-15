@@ -1,0 +1,159 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Granola Meeting Agent — Lambda + DynamoDB + SQS
+
+Parameters:
+  LinqApiToken:
+    Type: String
+    NoEcho: true
+    Description: Linq Blue API bearer token
+  AnthropicApiKey:
+    Type: String
+    NoEcho: true
+    Description: Claude API key
+  CredentialEncryptionKey:
+    Type: String
+    NoEcho: true
+    Description: 64-char hex key for AES-256-GCM credential encryption
+  LinqAgentBotNumbers:
+    Type: String
+    Default: '+16504447005'
+    Description: Comma-separated bot phone numbers
+  AllowedSenders:
+    Type: String
+    Default: ''
+    Description: Comma-separated allowed sender numbers (empty = allow all)
+  IgnoredSenders:
+    Type: String
+    Default: ''
+    Description: Comma-separated ignored sender numbers
+  BaseUrl:
+    Type: String
+    Default: ''
+    Description: Public base URL (leave empty — set after first deploy using API Gateway URL)
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Architectures: [arm64]
+    MemorySize: 256
+    Layers:
+      - !Ref DepsLayer
+    Environment:
+      Variables:
+        NODE_ENV: production
+        DYNAMODB_TABLE: !Ref AgentTable
+        LINQ_API_TOKEN: !Ref LinqApiToken
+        ANTHROPIC_API_KEY: !Ref AnthropicApiKey
+        CREDENTIAL_ENCRYPTION_KEY: !Ref CredentialEncryptionKey
+        LINQ_AGENT_BOT_NUMBERS: !Ref LinqAgentBotNumbers
+        ALLOWED_SENDERS: !Ref AllowedSenders
+        IGNORED_SENDERS: !Ref IgnoredSenders
+        GRANOLA_MCP_URL: 'https://mcp.granola.ai/mcp'
+  HttpApi:
+    CorsConfiguration:
+      AllowOrigins: ['*']
+      AllowMethods: [GET, POST]
+      AllowHeaders: [Content-Type]
+
+Resources:
+
+  # Lambda Layer — heavy deps (Anthropic SDK, MCP SDK)
+  DepsLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: granola-agent-deps
+      Description: '@anthropic-ai/sdk + @modelcontextprotocol/sdk'
+      ContentUri: ../dist/layer
+      CompatibleRuntimes: [nodejs20.x]
+      CompatibleArchitectures: [arm64, x86_64]
+
+  # Single-table DynamoDB
+  AgentTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: granola-agent
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: PK, AttributeType: S }
+        - { AttributeName: SK, AttributeType: S }
+      KeySchema:
+        - { AttributeName: PK, KeyType: HASH }
+        - { AttributeName: SK, KeyType: RANGE }
+      TimeToLiveSpecification:
+        AttributeName: TTL
+        Enabled: true
+
+  # FIFO SQS — per-chat message ordering
+  MessageQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: granola-agent-messages.fifo
+      FifoQueue: true
+      ContentBasedDeduplication: false
+      VisibilityTimeout: 120
+      MessageRetentionPeriod: 3600
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt DeadLetterQueue.Arn
+        maxReceiveCount: 2
+
+  DeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: granola-agent-dlq.fifo
+      FifoQueue: true
+      MessageRetentionPeriod: 1209600
+
+  # Lambda #1: Receiver — handles HTTP, enqueues to SQS
+  ReceiverFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: granola-agent-receiver
+      Handler: receiver.handler
+      CodeUri: ../dist/handlers
+      Timeout: 10
+      MemorySize: 256
+      Environment:
+        Variables:
+          SQS_QUEUE_URL: !Ref MessageQueue
+          BASE_URL: !Ref BaseUrl
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AgentTable
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt MessageQueue.QueueName
+      Events:
+        CatchAll:
+          Type: HttpApi
+
+  # Lambda #2: Processor — SQS-triggered, Claude + Granola MCP
+  # NOTE: BASE_URL is passed in SQS message payload by the Receiver,
+  # not via env var, to avoid circular dependency with ServerlessHttpApi.
+  ProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: granola-agent-processor
+      Handler: processor.handler
+      CodeUri: ../dist/handlers
+      Timeout: 60
+      MemorySize: 512
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AgentTable
+      Events:
+        SQSTrigger:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt MessageQueue.Arn
+            BatchSize: 1
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway URL (set as Linq webhook + OAuth callback base)
+    Value: !Sub 'https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com'
+  TableName:
+    Value: !Ref AgentTable
+  QueueUrl:
+    Value: !Ref MessageQueue
