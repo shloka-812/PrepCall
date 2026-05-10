@@ -1,6 +1,4 @@
-# Linq AI Agent Example
-
-![Demo Screenshot](demo.png)
+# Linq Interview Prep 
 
 **Try it yourself!** Text **[+1 (415) 870-7772](sms:+14158707772)** to chat with Claude Sullivan, our AI agent running on the Linq Blue API.
 
@@ -241,3 +239,4 @@ Full API documentation and OpenAPI spec available at: **https://apidocs.linqapp.
 ## License
 
 MIT
+
