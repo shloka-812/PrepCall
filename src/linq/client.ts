@@ -1,8 +1,19 @@
 // Linq Blue V3 API Client
 // Ref: https://apidocs.linqapp.com/models
 
-const BASE_URL = process.env.LINQ_API_BASE_URL || 'https://api.linqapp.com/api/partner/v3';
-const API_TOKEN = process.env.LINQ_API_TOKEN;
+const DEFAULT_BASE_URL = 'https://api.linqapp.com/api/partner/v3';
+
+function getBaseUrl(): string {
+  return process.env.LINQ_API_BASE_URL || DEFAULT_BASE_URL;
+}
+
+function getApiToken(): string {
+  const token = process.env.LINQ_API_TOKEN;
+  if (!token) {
+    throw new Error('LINQ_API_TOKEN not configured');
+  }
+  return token;
+}
 
 // Truncate error messages (especially HTML error pages)
 function truncateError(text: string, maxLen = 100): string {
@@ -35,11 +46,9 @@ export async function getChat(chatId: string): Promise<ChatInfo> {
     return cached;
   }
 
-  if (!API_TOKEN) {
-    throw new Error('LINQ_API_TOKEN not configured');
-  }
+  const API_TOKEN = getApiToken();
 
-  const url = `${BASE_URL}/chats/${chatId}`;
+  const url = `${getBaseUrl()}/chats/${chatId}`;
 
   console.log(`[linq] Fetching chat info for ${chatId}`);
 
@@ -86,11 +95,9 @@ export interface MediaAttachment {
 }
 
 export async function sendMessage(chatId: string, text: string, effect?: MessageEffect, replyTo?: ReplyTo, media?: MediaAttachment[]): Promise<SendMessageResponse> {
-  if (!API_TOKEN) {
-    throw new Error('LINQ_API_TOKEN not configured');
-  }
+  const API_TOKEN = getApiToken();
 
-  const url = `${BASE_URL}/chats/${chatId}/messages`;
+  const url = `${getBaseUrl()}/chats/${chatId}/messages`;
 
   const extras: string[] = [];
   if (effect) extras.push('effect');
@@ -146,11 +153,9 @@ export async function sendMessage(chatId: string, text: string, effect?: Message
 }
 
 export async function renameGroupChat(chatId: string, displayName: string): Promise<void> {
-  if (!API_TOKEN) {
-    throw new Error('LINQ_API_TOKEN not configured');
-  }
+  const API_TOKEN = getApiToken();
 
-  const url = `${BASE_URL}/chats/${chatId}`;
+  const url = `${getBaseUrl()}/chats/${chatId}`;
 
   console.log(`[linq] Renaming chat ${chatId} to "${displayName}"`);
 
@@ -175,11 +180,9 @@ export async function renameGroupChat(chatId: string, displayName: string): Prom
 }
 
 export async function setGroupChatIcon(chatId: string, iconUrl: string): Promise<void> {
-  if (!API_TOKEN) {
-    throw new Error('LINQ_API_TOKEN not configured');
-  }
+  const API_TOKEN = getApiToken();
 
-  const url = `${BASE_URL}/chats/${chatId}`;
+  const url = `${getBaseUrl()}/chats/${chatId}`;
 
   console.log(`[linq] Setting chat ${chatId} icon to ${iconUrl.substring(0, 50)}...`);
 
@@ -204,11 +207,9 @@ export async function setGroupChatIcon(chatId: string, iconUrl: string): Promise
 }
 
 export async function removeParticipant(chatId: string, handle: string): Promise<void> {
-  if (!API_TOKEN) {
-    throw new Error('LINQ_API_TOKEN not configured');
-  }
+  const API_TOKEN = getApiToken();
 
-  const url = `${BASE_URL}/chats/${chatId}/participants/${encodeURIComponent(handle)}`;
+  const url = `${getBaseUrl()}/chats/${chatId}/participants/${encodeURIComponent(handle)}`;
 
   console.log(`[linq] Removing participant ${handle} from chat ${chatId}`);
 
@@ -231,11 +232,9 @@ export async function removeParticipant(chatId: string, handle: string): Promise
 }
 
 export async function shareContactCard(chatId: string): Promise<void> {
-  if (!API_TOKEN) {
-    throw new Error('LINQ_API_TOKEN not configured');
-  }
+  const API_TOKEN = getApiToken();
 
-  const url = `${BASE_URL}/chats/${chatId}/share_contact_card`;
+  const url = `${getBaseUrl()}/chats/${chatId}/share_contact_card`;
 
   console.log(`[linq] Sharing contact card with chat ${chatId}`);
 
@@ -256,11 +255,9 @@ export async function shareContactCard(chatId: string): Promise<void> {
 }
 
 export async function markAsRead(chatId: string): Promise<void> {
-  if (!API_TOKEN) {
-    throw new Error('LINQ_API_TOKEN not configured');
-  }
+  const API_TOKEN = getApiToken();
 
-  const url = `${BASE_URL}/chats/${chatId}/read`;
+  const url = `${getBaseUrl()}/chats/${chatId}/read`;
 
   console.log(`[linq] Marking chat ${chatId} as read`);
 
@@ -281,11 +278,9 @@ export async function markAsRead(chatId: string): Promise<void> {
 }
 
 export async function startTyping(chatId: string): Promise<void> {
-  if (!API_TOKEN) {
-    throw new Error('LINQ_API_TOKEN not configured');
-  }
+  const API_TOKEN = getApiToken();
 
-  const url = `${BASE_URL}/chats/${chatId}/typing`;
+  const url = `${getBaseUrl()}/chats/${chatId}/typing`;
 
   console.log(`[linq] Starting typing indicator for chat ${chatId}`);
 
@@ -306,11 +301,9 @@ export async function startTyping(chatId: string): Promise<void> {
 }
 
 export async function stopTyping(chatId: string): Promise<void> {
-  if (!API_TOKEN) {
-    throw new Error('LINQ_API_TOKEN not configured');
-  }
+  const API_TOKEN = getApiToken();
 
-  const url = `${BASE_URL}/chats/${chatId}/typing`;
+  const url = `${getBaseUrl()}/chats/${chatId}/typing`;
 
   console.log(`[linq] Stopping typing indicator for chat ${chatId}`);
 
@@ -351,11 +344,9 @@ export async function sendReaction(
   reaction: Reaction,
   operation: 'add' | 'remove' = 'add'
 ): Promise<SendReactionResponse> {
-  if (!API_TOKEN) {
-    throw new Error('LINQ_API_TOKEN not configured');
-  }
+  const API_TOKEN = getApiToken();
 
-  const url = `${BASE_URL}/messages/${messageId}/reactions`;
+  const url = `${getBaseUrl()}/messages/${messageId}/reactions`;
 
   const isCustom = reaction.type === 'custom';
   const displayName = isCustom ? (reaction as { type: 'custom'; emoji: string }).emoji : reaction.type;

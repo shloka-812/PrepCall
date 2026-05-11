@@ -41,7 +41,7 @@ async function detectNgrokUrl(): Promise<string | null> {
 
 async function main() {
   // #region agent log
-  fetch('http://127.0.0.1:7342/ingest/eb9bc1c4-d0e8-44f8-bb63-a46dc8b354bd',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b9346'},body:JSON.stringify({sessionId:'7b9346',runId:'pre-fix',hypothesisId:'H4',location:'src/index.ts:main:startup',message:'Starting server',data:{pid:process.pid,node:process.version,argv:process.argv.slice(0,5),envPort:process.env.PORT||null,resolvedPort:PORT,baseUrlEnv:process.env.BASE_URL||null,nodeEnv:process.env.NODE_ENV||null},timestamp:Date.now()})}).catch(()=>{});
+  fetch('http://127.0.0.1:7342/ingest/eb9bc1c4-d0e8-44f8-bb63-a46dc8b354bd', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '7b9346' }, body: JSON.stringify({ sessionId: '7b9346', runId: 'pre-fix', hypothesisId: 'H4', location: 'src/index.ts:main:startup', message: 'Starting server', data: { pid: process.pid, node: process.version, argv: process.argv.slice(0, 5), envPort: process.env.PORT || null, resolvedPort: PORT, baseUrlEnv: process.env.BASE_URL || null, nodeEnv: process.env.NODE_ENV || null }, timestamp: Date.now() }) }).catch(() => { });
   // #endregion agent log
 
   // Detect public URL
@@ -51,21 +51,21 @@ async function main() {
         publicBaseUrl = url;
         console.log(`[main] Detected ngrok URL: ${publicBaseUrl}`);
       }
-    }).catch(() => {});
+    }).catch(() => { });
     publicBaseUrl = `http://localhost:${PORT}`;
   }
 
   const server = app.listen(PORT, () => {
     // #region agent log
-    fetch('http://127.0.0.1:7342/ingest/eb9bc1c4-d0e8-44f8-bb63-a46dc8b354bd',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b9346'},body:JSON.stringify({sessionId:'7b9346',runId:'pre-fix',hypothesisId:'H1',location:'src/index.ts:main:listenCallback',message:'Listening',data:{pid:process.pid,port:PORT,publicBaseUrl},timestamp:Date.now()})}).catch(()=>{});
+    fetch('http://127.0.0.1:7342/ingest/eb9bc1c4-d0e8-44f8-bb63-a46dc8b354bd', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '7b9346' }, body: JSON.stringify({ sessionId: '7b9346', runId: 'pre-fix', hypothesisId: 'H1', location: 'src/index.ts:main:listenCallback', message: 'Listening', data: { pid: process.pid, port: PORT, publicBaseUrl }, timestamp: Date.now() }) }).catch(() => { });
     // #endregion agent log
 
     console.log(`
 ╔═══════════════════════════════════════════════════════╗
 ║              PrepCall (Linq Blue)                     ║
 ╠═══════════════════════════════════════════════════════╣
-║  Server: http://localhost:${PORT}                       ║
-║  Public: ${publicBaseUrl.padEnd(42)}║
+║  Server: http://localhost:${PORT}                     ║
+║  Public: ${publicBaseUrl.padEnd(42)}                  ║
 ╚═══════════════════════════════════════════════════════╝
     `);
   });
@@ -73,7 +73,7 @@ async function main() {
   server.on('error', (err: unknown) => {
     const e = err as { code?: string; message?: string; syscall?: string; address?: string; port?: number };
     // #region agent log
-    fetch('http://127.0.0.1:7342/ingest/eb9bc1c4-d0e8-44f8-bb63-a46dc8b354bd',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b9346'},body:JSON.stringify({sessionId:'7b9346',runId:'pre-fix',hypothesisId:'H2',location:'src/index.ts:main:serverError',message:'Server listen error',data:{pid:process.pid,port:PORT,code:e.code||null,syscall:e.syscall||null,address:e.address||null,errorMessage:e.message||null},timestamp:Date.now()})}).catch(()=>{});
+    fetch('http://127.0.0.1:7342/ingest/eb9bc1c4-d0e8-44f8-bb63-a46dc8b354bd', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '7b9346' }, body: JSON.stringify({ sessionId: '7b9346', runId: 'pre-fix', hypothesisId: 'H2', location: 'src/index.ts:main:serverError', message: 'Server listen error', data: { pid: process.pid, port: PORT, code: e.code || null, syscall: e.syscall || null, address: e.address || null, errorMessage: e.message || null }, timestamp: Date.now() }) }).catch(() => { });
     // #endregion agent log
   });
 }
