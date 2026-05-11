@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: prepcall-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - prepcall-network
+
+  app:
+    image: node:22-alpine
+    container_name: prepcall-app
+    working_dir: /app
+    command: sh -c "npm install && npm run dev"
+    env_file:
+      - .env
+    environment:
+      # Use the docker-compose service name inside the network.
+      MONGODB_URI: mongodb://mongodb:27017/prepcall
+    volumes:
+      - .:/app
+      - node_modules:/app/node_modules
+    ports:
+      - "${PORT:-3000}:3000"
+    depends_on:
+      - mongodb
+    networks:
+      - prepcall-network
+
+volumes:
+  mongodb_data:
+  node_modules:
+
+networks:
+  prepcall-network:
+    driver: bridge

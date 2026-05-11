@@ -1,90 +1,66 @@
-import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, GetCommand, PutCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
-
-// DynamoDB setup
-const client = new DynamoDBClient({ region: 'us-east-1' });
-const docClient = DynamoDBDocumentClient.from(client);
-const TABLE_NAME = process.env.DYNAMODB_TABLE_NAME || 'linq-blue-agent-example';
-
-// TTL: 1 hour for conversations
+// In-memory state.
+//
+// Phase 1 cleanup removes AWS/DynamoDB. MongoDB persistence will be introduced in Phase 2.
 const CONVERSATION_TTL_SECONDS = 60 * 60;
+const MAX_MESSAGES_PER_CHAT = 20;
 
-// Message with sender tracking for group chats
+type EpochSeconds = number;
+
+interface ConversationRecord {
+  messages: StoredMessage[];
+  lastActive: EpochSeconds;
+  ttl: EpochSeconds;
+}
+
+const conversations = new Map<string, ConversationRecord>();
+const userProfiles = new Map<string, UserProfile>();
+
 export interface StoredMessage {
   role: 'user' | 'assistant';
   content: string;
   handle?: string; // Who sent this message (for user messages in group chats)
 }
 
-interface ConversationRecord {
-  pk: string;
-  messages: StoredMessage[];
-  lastActive: number;
-  ttl: number;
+function nowSeconds(): EpochSeconds {
+  return Math.floor(Date.now() / 1000);
+}
+
+function pruneConversationIfExpired(chatId: string, now = nowSeconds()) {
+  const record = conversations.get(chatId);
+  if (!record) return;
+  if (record.ttl <= now) {
+    conversations.delete(chatId);
+  }
 }
 
 export async function getConversation(chatId: string): Promise<StoredMessage[]> {
-  try {
-    const result = await docClient.send(new GetCommand({
-      TableName: TABLE_NAME,
-      Key: { pk: `CHAT#${chatId}` },
-    }));
-
-    if (!result.Item) return [];
-
-    const record = result.Item as ConversationRecord;
-    return record.messages || [];
-  } catch (error) {
-    console.error('[conversation] Error getting conversation:', error);
-    return [];
-  }
+  pruneConversationIfExpired(chatId);
+  return conversations.get(chatId)?.messages ?? [];
 }
 
 export async function addMessage(chatId: string, role: 'user' | 'assistant', content: string, handle?: string): Promise<void> {
-  try {
-    // Get existing conversation
-    const messages = await getConversation(chatId);
+  const now = nowSeconds();
+  pruneConversationIfExpired(chatId, now);
 
-    // Add new message with optional sender handle
-    const newMessage: StoredMessage = { role, content };
-    if (handle) {
-      newMessage.handle = handle;
-    }
-    messages.push(newMessage);
+  const existing = conversations.get(chatId);
+  const messages = existing?.messages ?? [];
 
-    // Keep only last 20 messages
-    const trimmedMessages = messages.slice(-20);
+  const newMessage: StoredMessage = handle ? { role, content, handle } : { role, content };
+  messages.push(newMessage);
 
-    const now = Math.floor(Date.now() / 1000);
-
-    await docClient.send(new PutCommand({
-      TableName: TABLE_NAME,
-      Item: {
-        pk: `CHAT#${chatId}`,
-        messages: trimmedMessages,
-        lastActive: now,
-        ttl: now + CONVERSATION_TTL_SECONDS,
-      },
-    }));
-  } catch (error) {
-    console.error('[conversation] Error adding message:', error);
-  }
+  conversations.set(chatId, {
+    messages: messages.slice(-MAX_MESSAGES_PER_CHAT),
+    lastActive: now,
+    ttl: now + CONVERSATION_TTL_SECONDS,
+  });
 }
 
 export async function clearConversation(chatId: string): Promise<void> {
-  try {
-    await docClient.send(new DeleteCommand({
-      TableName: TABLE_NAME,
-      Key: { pk: `CHAT#${chatId}` },
-    }));
-  } catch (error) {
-    console.error('[conversation] Error clearing conversation:', error);
-  }
+  conversations.delete(chatId);
 }
 
-// Not really needed with DynamoDB (TTL handles cleanup), but keep for compatibility
 export async function clearAllConversations(): Promise<void> {
-  console.log('[conversation] clearAllConversations not implemented for DynamoDB');
+  conversations.clear();
 }
 
 // ============================================================================
@@ -100,54 +76,25 @@ export interface UserProfile {
 }
 
 export async function getUserProfile(handle: string): Promise<UserProfile | null> {
-  try {
-    const result = await docClient.send(new GetCommand({
-      TableName: TABLE_NAME,
-      Key: { pk: `USER#${handle}` },
-    }));
-
-    if (!result.Item) return null;
-
-    return {
-      handle: result.Item.handle,
-      name: result.Item.name || null,
-      facts: result.Item.facts || [],
-      firstSeen: result.Item.firstSeen,
-      lastSeen: result.Item.lastSeen,
-    };
-  } catch (error) {
-    console.error('[conversation] Error getting user profile:', error);
-    return null;
-  }
+  return userProfiles.get(handle) ?? null;
 }
 
 export async function updateUserProfile(
   handle: string,
   updates: { name?: string; facts?: string[] }
 ): Promise<void> {
-  try {
-    const existing = await getUserProfile(handle);
-    const now = Math.floor(Date.now() / 1000);
+  const existing = await getUserProfile(handle);
+  const now = nowSeconds();
 
-    const profile = {
-      pk: `USER#${handle}`,
-      handle,
-      name: updates.name ?? existing?.name ?? null,
-      facts: updates.facts ?? existing?.facts ?? [],
-      firstSeen: existing?.firstSeen ?? now,
-      lastSeen: now,
-      // No TTL - user profiles persist forever
-    };
+  const profile: UserProfile = {
+    handle,
+    name: updates.name ?? existing?.name ?? null,
+    facts: updates.facts ?? existing?.facts ?? [],
+    firstSeen: existing?.firstSeen ?? now,
+    lastSeen: now,
+  };
 
-    await docClient.send(new PutCommand({
-      TableName: TABLE_NAME,
-      Item: profile,
-    }));
-
-    console.log(`[conversation] Updated profile for ${handle}: name=${profile.name}, facts=${profile.facts.length}`);
-  } catch (error) {
-    console.error('[conversation] Error updating user profile:', error);
-  }
+  userProfiles.set(handle, profile);
 }
 
 export async function addUserFact(handle: string, fact: string): Promise<boolean> {
@@ -188,15 +135,6 @@ export async function setUserName(handle: string, name: string): Promise<boolean
 }
 
 export async function clearUserProfile(handle: string): Promise<boolean> {
-  try {
-    await docClient.send(new DeleteCommand({
-      TableName: TABLE_NAME,
-      Key: { pk: `USER#${handle}` },
-    }));
-    console.log(`[conversation] Cleared profile for ${handle}`);
-    return true;
-  } catch (error) {
-    console.error('[conversation] Error clearing user profile:', error);
-    return false;
-  }
+  userProfiles.delete(handle);
+  return true;
 }
