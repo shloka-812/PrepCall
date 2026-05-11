@@ -118,3 +118,8 @@ export async function closeMongo(): Promise<void> {
   }
 }
 
+export async function getUserProfile(handle: string): Promise<UserProfileDoc | null> {
+  const db = await getMongoDb();
+  return db.collection<UserProfileDoc>('user_profiles').findOne({ handle });
+}
+

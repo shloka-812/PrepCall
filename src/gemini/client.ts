@@ -60,12 +60,48 @@ export async function generateBubbles(prompt: string, opts?: GeminiGenerateOptio
   const { GEMINI_API_KEY } = getGeminiEnv();
   const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
-  const modelName = opts?.model ?? 'gemini-1.5-flash';
+  const modelName = opts?.model ?? 'gemini-flash-latest';
   const model = genAI.getGenerativeModel({ model: modelName });
   const result = await model.generateContent(prompt);
 
   const raw = result.response.text();
   const cleaned = cleanResponse(raw);
   return splitIntoBubbles(cleaned, { maxBubbles: opts?.maxBubbles ?? 4 });
+}
+
+export async function classifyIntent(text: string): Promise<string | null> {
+  const { GEMINI_API_KEY } = getGeminiEnv();
+  const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+  const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
+
+  const prompt = `
+You are an intent classifier for PrepCall, a pre-interview research agent.
+Map the user's message to one of the following commands or return "none" if it doesn't match any.
+Return ONLY the command string (e.g., "/help") or "none".
+
+Commands:
+- /help: User wants help, instructions, or to know what the bot can do.
+- /start: User wants to start or says hello.
+- /update resume: User wants to refresh or update their resume from Notion.
+- /set jd: User is providing a job description or wants to save one.
+- /jd: User wants to see the currently stored job description.
+- /brief: User wants a full research brief for a company and role.
+- /company: User wants information about a specific company.
+- /talking points: User wants interview talking points based on their resume and JD.
+- /gaps: User wants to know gaps in their experience for a role.
+- /questions: User wants likely interview questions.
+- /saved: User wants to see their saved/bookmarked intel.
+- /clear: User wants to clear the current session or start fresh.
+
+User message: "${text}"
+
+Intent:`;
+
+  const result = await model.generateContent(prompt);
+  const intent = result.response.text().trim().toLowerCase();
+
+  if (intent === 'none') return null;
+  // Ensure it starts with /
+  return intent.startsWith('/') ? intent : `/${intent}`;
 }
 
