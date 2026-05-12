@@ -431,6 +431,9 @@ export function createWebhookMessageHandler(): MessageHandler {
           cache = await getPrepCache(from, company, role);
         }
 
+        // Keep typing indicator alive
+        await startTyping(chatId).catch(() => {});
+
         // Send bubbles
         const infoBubbles = companyInfoToBubbles(cache!.companyInfo);
         for (const b of infoBubbles) await sendTracked(chatId, from, b, replyTo);

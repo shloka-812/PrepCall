@@ -24,7 +24,7 @@
 - **Saved Intel** — ❤️ react any message to permanently bookmark it to `saved_intel` collection
 - **Reaction Webhooks** — Full `reaction.added` / `reaction.removed` webhook handling
 - **Message Cache** — MongoDB-backed message cache (24-hour TTL) so reactions resolve correctly even after server restart
-- **Typing Indicators** — Shows typing while Gemini + web search runs — feels like a real researcher
+- **Typing Indicators** — Shows typing while Gemini + web search runs — feels like a real researcher  *(Note: iMessage-only; not supported on RCS/SMS per Linq Blue API docs)*
 - **Multi-Bubble Responses** — Replies split into short bubbles (max 4), never walls of text
 - **Session Memory** — Remembers conversation context per chat (1-hour TTL)
 - **Persistent User Profiles** — Stores resume cache, Notion token, job description, and user metadata

@@ -288,7 +288,9 @@ export async function startTyping(chatId: string): Promise<void> {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${API_TOKEN}`,
+      'Content-Type': 'application/json',
     },
+    body: JSON.stringify({}),
   });
 
   if (!response.ok) {
