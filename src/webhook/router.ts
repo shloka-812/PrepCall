@@ -1,8 +1,8 @@
 import type { MessageHandler, ReactionHandler } from './handler.js';
-import { markAsRead, sendMessage, startTyping, stopTyping } from '../linq/client.js';
+import { markAsRead, sendMessage, startTyping, stopTyping, getMessage } from '../linq/client.js';
 import type { SendMessageResponse } from '../linq/client.js';
 import { refreshResumeForHandle, setJobDescriptionForHandle } from '../notion/service.js';
-import { getUserProfile, saveIntel, getSavedIntel, updateSession } from '../db/mongodb.js';
+import { getUserProfile, saveIntel, getSavedIntel, updateSession, getMessageCache, upsertMessageCache } from '../db/mongodb.js';
 import {
   classifyIntent,
   generateCompanyInfo,
@@ -36,6 +36,7 @@ async function sendTracked(
 ): Promise<void> {
   const resp = await sendMessage(chatId, text, undefined, replyTo);
   trackSent(resp, text, handle, chatId);
+  await upsertMessageCache(resp.message.id, chatId, handle, text);
 }
 
 // ─── JD Detection ────────────────────────────────────────────────────────────
@@ -87,12 +88,38 @@ function getHelpText(): string[] {
 
 export function createReactionHandler(): ReactionHandler {
   return async (chatId, from, messageId, reaction, action) => {
-    const isLove = reaction === 'love' || reaction === '❤️' || reaction.includes('love') || reaction.includes('heart');
+    const reactionLower = (reaction || '').toLowerCase();
+    const isLove = reactionLower === 'love' || reaction === '❤️' || reactionLower.includes('love') || reactionLower.includes('heart');
     if (!isLove || action !== 'added') return;
 
-    const msg = recentMessages.get(messageId);
-    if (!msg) {
-      console.log(`[router] ❤️ reaction on unknown message ${messageId.slice(0, 8)} — skipping`);
+    // 1️⃣ Check in-memory map (fastest, lives for process lifetime)
+    let resolvedText: string | null = recentMessages.get(messageId)?.text ?? null;
+
+    // 2️⃣ Fallback: check MongoDB message_cache (survives restarts, 24h TTL)
+    if (!resolvedText) {
+      console.log(`[router] ❤️ message ${messageId.slice(0, 8)} not in memory — checking DB cache...`);
+      const cached = await getMessageCache(messageId).catch(() => null);
+      if (cached?.text) resolvedText = cached.text;
+    }
+
+    // 3️⃣ Fallback: fetch from Linq API directly
+    if (!resolvedText) {
+      console.log(`[router] ❤️ message ${messageId.slice(0, 8)} not in DB — fetching from Linq API...`);
+      const apiMsg = await getMessage(messageId).catch(() => null);
+      if (apiMsg) {
+        resolvedText = apiMsg.parts
+          .filter(p => p.type === 'text' && p.value)
+          .map(p => p.value!)
+          .join('\n') || null;
+        // Warm the cache for future reactions
+        if (resolvedText) {
+          await upsertMessageCache(messageId, chatId, from, resolvedText).catch(() => {});
+        }
+      }
+    }
+
+    if (!resolvedText) {
+      console.warn(`[router] ❤️ Could not resolve text for message ${messageId.slice(0, 8)} — skipping`);
       return;
     }
 
@@ -101,10 +128,10 @@ export function createReactionHandler(): ReactionHandler {
         handle: from,
         chatId,
         messageId,
-        text: msg.text,
+        text: resolvedText,
         source: 'reaction',
       });
-      console.log(`[router] Saved intel for ${from}: "${msg.text.substring(0, 40)}..."`);
+      console.log(`[router] ✅ Saved intel for ${from}: "${resolvedText.substring(0, 60)}..."`);
     } catch (err) {
       console.error('[router] Failed to save intel:', err);
     }
@@ -115,6 +142,16 @@ export function createReactionHandler(): ReactionHandler {
 
 export function createWebhookMessageHandler(): MessageHandler {
   return async (chatId, from, text, messageId, _images, _audio, _incomingEffect, _incomingReplyTo) => {
+    // Cache every incoming message immediately so reactions can resolve it later
+    recentMessages.set(messageId, { text, handle: from, chatId });
+    if (recentMessages.size > RECENT_MSG_CAP) {
+      const firstKey = recentMessages.keys().next().value;
+      if (firstKey !== undefined) recentMessages.delete(firstKey);
+    }
+    upsertMessageCache(messageId, chatId, from, text).catch(err =>
+      console.error(`[router] Failed to cache incoming message ${messageId.slice(0, 8)}:`, err)
+    );
+
     await Promise.all([markAsRead(chatId), startTyping(chatId)]);
 
     const replyTo = { message_id: messageId };

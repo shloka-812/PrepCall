@@ -49,7 +49,7 @@ async function main() {
     detectNgrokUrl().then(url => {
       if (url) {
         publicBaseUrl = url;
-        console.log(`[main] Detected ngrok URL: ${publicBaseUrl}`);
+        console.log(`[main] Detected ngrok URL:  ${publicBaseUrl}`);
       }
     }).catch(() => { });
     publicBaseUrl = `http://localhost:${PORT}`;

@@ -381,3 +381,39 @@ export async function sendReaction(
 
   return data;
 }
+
+export interface MessagePart {
+  type: string;
+  value?: string;
+}
+
+export interface MessageDoc {
+  id: string;
+  parts: MessagePart[];
+  sent_at: string;
+  direction: 'inbound' | 'outbound';
+}
+
+export async function getMessage(messageId: string): Promise<MessageDoc | null> {
+  const API_TOKEN = getApiToken();
+  const url = `${getBaseUrl()}/messages/${messageId}`;
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${API_TOKEN}` },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.warn(`[linq] getMessage ${messageId.slice(0, 8)} → ${response.status}: ${truncateError(errorText)}`);
+      return null;
+    }
+
+    const data = await response.json() as MessageDoc;
+    return data;
+  } catch (err) {
+    console.warn(`[linq] getMessage failed for ${messageId.slice(0, 8)}:`, err);
+    return null;
+  }
+}

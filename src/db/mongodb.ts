@@ -53,6 +53,12 @@ export async function getMongoDb(): Promise<Db> {
   const dbName = resolveDbName(MONGODB_URI, MONGODB_DB_NAME);
   const client = await getMongoClient();
   dbSingleton = client.db(dbName);
+  
+  // Ensure indexes are created on first DB access
+  await ensureMongoIndexes(dbSingleton).catch(err => {
+    console.error('[db] Failed to ensure indexes:', err);
+  });
+  
   return dbSingleton;
 }
 
@@ -138,6 +144,10 @@ export async function ensureMongoIndexes(db: Db): Promise<void> {
       { key: { userId: 1, company: 1, role: 1 }, name: 'lookup' },
       { key: { expiresAt: 1 }, name: 'expiresAt_ttl', expireAfterSeconds: 0 },
     ]),
+    db.collection('message_cache').createIndexes([
+      { key: { messageId: 1 }, name: 'messageId_unique', unique: true },
+      { key: { createdAt: 1 }, name: 'createdAt_ttl', expireAfterSeconds: 86400 }, // 24 hours
+    ]),
   ]);
 }
 
@@ -182,3 +192,19 @@ export async function getSavedIntel(handle: string, limit = 5): Promise<SavedInt
     .toArray();
 }
 
+export async function upsertMessageCache(messageId: string, chatId: string, handle: string, text: string): Promise<void> {
+  const db = await getMongoDb();
+  await db.collection('message_cache').updateOne(
+    { messageId },
+    { $set: { chatId, handle, text, createdAt: new Date() } },
+    { upsert: true }
+  );
+  console.log(`[db] Cached message ${messageId.slice(0, 8)}`);
+}
+
+export async function getMessageCache(messageId: string): Promise<{ text: string; handle: string; chatId: string } | null> {
+  const db = await getMongoDb();
+  const doc = await db.collection('message_cache').findOne({ messageId });
+  if (!doc) return null;
+  return { text: doc.text, handle: doc.handle, chatId: doc.chatId };
+}

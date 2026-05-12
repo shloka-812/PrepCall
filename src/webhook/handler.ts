@@ -36,11 +36,36 @@ export function createWebhookHandler(onMessage: MessageHandler, onReaction?: Rea
     res.status(200).json({ received: true });
 
     if (isMessageReactionEvent(event) && onReaction) {
-      const { chat, sender_handle, message_id, reaction, action } = event.data;
-      if (sender_handle.is_me) return;
-      console.log(`[webhook] Reaction ${reaction} ${action} by ${sender_handle.handle} on message ${message_id.slice(0, 8)}...`);
+      const data = event.data as any;
+      const chat = data.chat;
+      const senderHandle = data.sender_handle || data.handle_info;
+      const messageId = data.message_id || data.id;
+      
+      const reactionValue = typeof data.reaction === 'object' 
+        ? (data.reaction.emoji || data.reaction.name || data.reaction.type)
+        : (data.reaction || data.emoji || data.custom_emoji || data.customEmoji);
+      
+      let action = data.action;
+      if (!action) {
+        if (event.event_type === 'reaction.added' || event.event_type === 'message.reaction') action = 'added';
+        else if (event.event_type === 'reaction.removed') action = 'removed';
+        else action = 'added';
+      }
+
+      const from = senderHandle?.handle || data.from || data.handle;
+      const chatId = chat?.id || data.chat_id;
+
+      if (senderHandle?.is_me || data.is_from_me) return;
+      
+      if (!chatId || !from || !messageId) {
+        console.warn(`[webhook] Incomplete reaction data: chat=${chatId}, sender=${from}, msg=${messageId}`);
+        console.log(`[webhook] Full payload:`, JSON.stringify(event, null, 2));
+        return;
+      }
+
+      console.log(`[webhook] Reaction ${reactionValue} ${action} by ${from} on message ${messageId.slice(0, 8)}...`);
       try {
-        await onReaction(chat.id, sender_handle.handle, message_id, reaction, action);
+        await onReaction(chatId, from, messageId, reactionValue, action);
       } catch (error) {
         console.error(`[webhook] Error handling reaction:`, error);
       }

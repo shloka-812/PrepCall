@@ -103,7 +103,11 @@ export interface MessageReactionEvent extends WebhookEvent {
 }
 
 export function isMessageReactionEvent(event: WebhookEvent): event is MessageReactionEvent {
-  return event.event_type === 'message.reaction';
+  return (
+    event.event_type === 'message.reaction' ||
+    event.event_type === 'reaction.added' ||
+    event.event_type === 'reaction.removed'
+  );
 }
 
 /**
