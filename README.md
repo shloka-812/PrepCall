@@ -289,6 +289,13 @@ docker-compose up --build
 
 Full Linq Blue API reference: **https://apidocs.linqapp.com**
 
+## Credits
+
+- **Original Infrastructure**: Based on a messaging agent template by [George McCain](https://github.com/georgemccain).
+- **Core Transformation**: Fully refactored and transformed into PrepCall (Google Gemini, MongoDB, Notion integration, and Interview Research logic) by **Shloka Pandya**.
+
+---
+
 ## License
 
 MIT
