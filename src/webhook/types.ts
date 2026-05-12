@@ -89,6 +89,23 @@ export function isMessageReceivedEvent(event: WebhookEvent): event is MessageRec
   return event.event_type === 'message.received';
 }
 
+export interface MessageReactionData {
+  chat: ChatInfo;
+  sender_handle: HandleInfo;
+  message_id: string;
+  reaction: string;
+  action: 'added' | 'removed';
+}
+
+export interface MessageReactionEvent extends WebhookEvent {
+  event_type: 'message.reaction';
+  data: MessageReactionData;
+}
+
+export function isMessageReactionEvent(event: WebhookEvent): event is MessageReactionEvent {
+  return event.event_type === 'message.reaction';
+}
+
 /**
  * Extract fields from webhook data, handling both new and legacy formats.
  */

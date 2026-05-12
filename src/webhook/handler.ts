@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import {
   WebhookEvent,
   isMessageReceivedEvent,
+  isMessageReactionEvent,
   extractEventFields,
   extractTextContent,
   extractImageUrls,
@@ -17,7 +18,11 @@ export interface MessageHandler {
   (chatId: string, from: string, text: string, messageId: string, images: ExtractedMedia[], audio: ExtractedMedia[], incomingEffect?: MessageEffect, incomingReplyTo?: ReplyTo, service?: MessageService): Promise<void>;
 }
 
-export function createWebhookHandler(onMessage: MessageHandler) {
+export interface ReactionHandler {
+  (chatId: string, from: string, messageId: string, reaction: string, action: 'added' | 'removed'): Promise<void>;
+}
+
+export function createWebhookHandler(onMessage: MessageHandler, onReaction?: ReactionHandler) {
   const botNumbers = process.env.LINQ_AGENT_BOT_NUMBERS?.split(',').map(p => p.trim()).filter(Boolean) || [];
   const ignoredSenders = process.env.IGNORED_SENDERS?.split(',').map(p => p.trim()).filter(Boolean) || [];
   const allowedSenders = process.env.ALLOWED_SENDERS?.split(',').map(p => p.trim()).filter(Boolean) || [];
@@ -28,8 +33,19 @@ export function createWebhookHandler(onMessage: MessageHandler) {
     const pstTime = new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles', hour12: false });
     console.log(`[webhook] ${pstTime} PST | ${event.event_type} (${event.event_id})`);
 
-    // Acknowledge receipt immediately
     res.status(200).json({ received: true });
+
+    if (isMessageReactionEvent(event) && onReaction) {
+      const { chat, sender_handle, message_id, reaction, action } = event.data;
+      if (sender_handle.is_me) return;
+      console.log(`[webhook] Reaction ${reaction} ${action} by ${sender_handle.handle} on message ${message_id.slice(0, 8)}...`);
+      try {
+        await onReaction(chat.id, sender_handle.handle, message_id, reaction, action);
+      } catch (error) {
+        console.error(`[webhook] Error handling reaction:`, error);
+      }
+      return;
+    }
 
     if (isMessageReceivedEvent(event)) {
       if (process.env.NODE_ENV !== 'production') {
@@ -38,25 +54,21 @@ export function createWebhookHandler(onMessage: MessageHandler) {
 
       const { chatId, from, recipientPhone, isFromMe, messageId, parts, effect, replyTo, service } = extractEventFields(event.data);
 
-      // Only process messages sent to this bot's phone numbers
       if (botNumbers.length > 0 && !botNumbers.includes(recipientPhone)) {
         console.log(`[webhook] Skipping message to ${recipientPhone} (not this bot's number)`);
         return;
       }
 
-      // Skip messages from ourselves
       if (isFromMe) {
         console.log(`[webhook] Skipping own message`);
         return;
       }
 
-      // If ALLOWED_SENDERS is set, only respond to those numbers
       if (allowedSenders.length > 0 && !allowedSenders.includes(from)) {
         console.log(`[webhook] Skipping ${from} (not in allowed senders)`);
         return;
       }
 
-      // Skip messages from ignored senders
       if (ignoredSenders.includes(from)) {
         console.log(`[webhook] Skipping ${from} (ignored sender)`);
         return;

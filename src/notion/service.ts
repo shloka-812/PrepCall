@@ -1,5 +1,6 @@
 import { fetchResumeTextFromEnv } from './resume.js';
 import { ensureMongoIndexes, getMongoDb, UserProfileDoc } from '../db/mongodb.js';
+import { invalidatePrepCache } from '../research/cache.js';
 
 function getNotionPageIdFromEnv(): string | null {
   const pageId = process.env.NOTION_PAGE_ID?.trim() || process.env.NOTION_RESUME_PAGE_ID?.trim();
@@ -27,6 +28,8 @@ export async function refreshResumeForHandle(handle: string): Promise<{ resumeTe
     },
     { upsert: true }
   );
+
+  await invalidatePrepCache(handle);
 
   return { resumeText, updatedAt };
 }

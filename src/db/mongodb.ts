@@ -80,6 +80,34 @@ export interface UserProfileDoc {
   notionPageId?: string;
   jobDescription?: string;
   jdSetAt?: Date;
+  currentCompany?: string | null;
+  currentRole?: string | null;
+}
+
+export interface PrepCacheDoc {
+  userId: string;
+  company: string;
+  role: string | null;
+  companyInfo: {
+    dateFounded: string;
+    ceo: string;
+    location: string;
+    peopleSize: string;
+    webLink: string;
+    currentStage: string;
+    totalFunding: string;
+    keyInvestors: string;
+    news: string[];
+  } | null;
+  talkingPoints: {
+    leadWith: string;
+    howToFrame: string;
+    gapToAddress: string;
+  } | null;
+  interviewQuestions: string[] | null;
+  resumeHash: string;
+  cachedAt: Date;
+  expiresAt: Date;
 }
 
 export interface SavedIntelDoc {
@@ -106,6 +134,10 @@ export async function ensureMongoIndexes(db: Db): Promise<void> {
       { key: { handle: 1, savedAt: -1 }, name: 'handle_savedAt' },
       { key: { messageId: 1 }, name: 'messageId_unique', unique: true },
     ]),
+    db.collection<PrepCacheDoc>('prep_cache').createIndexes([
+      { key: { userId: 1, company: 1, role: 1 }, name: 'lookup' },
+      { key: { expiresAt: 1 }, name: 'expiresAt_ttl', expireAfterSeconds: 0 },
+    ]),
   ]);
 }
 
@@ -121,5 +153,32 @@ export async function closeMongo(): Promise<void> {
 export async function getUserProfile(handle: string): Promise<UserProfileDoc | null> {
   const db = await getMongoDb();
   return db.collection<UserProfileDoc>('user_profiles').findOne({ handle });
+}
+
+export async function updateSession(handle: string, company: string | null, role: string | null): Promise<void> {
+  const db = await getMongoDb();
+  await db.collection<UserProfileDoc>('user_profiles').updateOne(
+    { handle },
+    { $set: { currentCompany: company?.toLowerCase() || null, currentRole: role?.toLowerCase() || null } }
+  );
+}
+
+export async function saveIntel(doc: Omit<SavedIntelDoc, 'savedAt'>): Promise<void> {
+  const db = await getMongoDb();
+  await db.collection<SavedIntelDoc>('saved_intel').updateOne(
+    { messageId: doc.messageId },
+    { $setOnInsert: { ...doc, savedAt: new Date() } },
+    { upsert: true }
+  );
+}
+
+export async function getSavedIntel(handle: string, limit = 5): Promise<SavedIntelDoc[]> {
+  const db = await getMongoDb();
+  return db
+    .collection<SavedIntelDoc>('saved_intel')
+    .find({ handle })
+    .sort({ savedAt: -1 })
+    .limit(limit)
+    .toArray();
 }
 

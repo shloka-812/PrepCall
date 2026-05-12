@@ -2,7 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { createWebhookHandler } from './webhook/handler.js';
-import { createWebhookMessageHandler } from './webhook/router.js';
+import { createWebhookMessageHandler, createReactionHandler } from './webhook/router.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -21,7 +21,7 @@ app.get('/health', (_req, res) => {
 // Webhook endpoint for Linq Blue
 app.post(
   '/webhook',
-  createWebhookHandler(createWebhookMessageHandler())
+  createWebhookHandler(createWebhookMessageHandler(), createReactionHandler())
 );
 
 // Auto-detect ngrok URL for local dev
