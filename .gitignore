@@ -12,6 +12,7 @@ CLAUDE.md
 
 # Codex local configuration
 .codex/
+.cursor/
 
 # OpenAPI spec (get latest from https://apidocs.linqapp.com)
 linqV3api.yaml
