@@ -34,11 +34,35 @@ export async function updatePrepCache(
   const db = await getMongoDb();
   const col = db.collection<PrepCacheDoc>('prep_cache');
 
+  const normalizedCompany = company.toLowerCase();
+  const normalizedRole = role?.toLowerCase() || null;
   const now = new Date();
   const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
 
+  if (normalizedRole) {
+    const exact = await col.findOne({ userId, company: normalizedCompany, role: normalizedRole });
+    if (!exact) {
+      const roleless = await col.findOne({ userId, company: normalizedCompany, role: null });
+      if (roleless) {
+        await col.updateOne(
+          { _id: roleless._id },
+          {
+            $set: {
+              ...updates,
+              resumeHash,
+              cachedAt: now,
+              expiresAt,
+              role: normalizedRole,
+            },
+          }
+        );
+        return;
+      }
+    }
+  }
+
   await col.updateOne(
-    { userId, company: company.toLowerCase(), role: role?.toLowerCase() || null },
+    { userId, company: normalizedCompany, role: normalizedRole },
     {
       $set: {
         ...updates,
@@ -48,9 +72,9 @@ export async function updatePrepCache(
       },
       $setOnInsert: {
         userId,
-        company: company.toLowerCase(),
-        role: role?.toLowerCase() || null,
-      }
+        company: normalizedCompany,
+        role: normalizedRole,
+      },
     },
     { upsert: true }
   );

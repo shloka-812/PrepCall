@@ -74,6 +74,35 @@ export function extractJobDescriptionFromSetCommand(text: string): string | null
   return (m[1] ?? '').trim();
 }
 
+function cleanParsedArg(value: string | undefined): string {
+  return (value ?? '')
+    .replace(/[“”"']+/g, '')
+    .replace(/[.?!]+$/g, '')
+    .trim();
+}
+
+export function extractBriefArgsFromText(text: string): { company: string; role: string | null } | null {
+  const roleMatch = text.match(/\b(?:for\s+role|role)\s+([^,.]+)/i);
+  const role = cleanParsedArg(roleMatch?.[1]);
+
+  const companyMatch =
+    text.match(/\bcompany\s+([^,.]+?)(?:\s+\b(?:for\s+role|role)\b|$)/i) ??
+    text.match(/\bbrief(?:\s+me)?(?:\s+about)?\s+([^,.]+?)(?:\s+\b(?:for\s+role|role)\b|$)/i);
+
+  const company = cleanParsedArg(companyMatch?.[1]);
+  if (!company) return null;
+
+  return { company, role: role || null };
+}
+
+export function extractCompanyFromText(text: string): string | null {
+  const match =
+    text.match(/\bcompany\s+([^,.]+)/i) ??
+    text.match(/\babout\s+([^,.]+)/i);
+  const company = cleanParsedArg(match?.[1]);
+  return company || null;
+}
+
 // ─── Help Text ────────────────────────────────────────────────────────────────
 
 function getHelpText(): string[] {
@@ -81,6 +110,46 @@ function getHelpText(): string[] {
     'PrepCall — your pre-interview research agent.',
     '/brief [company] [role] — full intel: company + strategy + questions\n/company [name] — company snapshot\n/talking points — strategy: lead with + how to frame + gaps\n/questions — likely interview questions',
     '/update resume — re-fetch resume from Notion\n/set jd <text> — save a job description\n/jd — show stored JD\n/saved — view bookmarked intel\n/clear — reset session\n\nOr just paste a JD directly — I\'ll detect it.',
+  ];
+}
+
+async function getStartText(from: string): Promise<string[]> {
+  const profile = await getUserProfile(from);
+  const hasResume = !!profile?.resumeText;
+  const hasJD = !!profile?.jobDescription;
+
+  if (hasResume && hasJD) {
+    // User is fully set up
+    return [
+      'PrepCall — your pre-interview research agent.',
+      'Send /brief [company] [role] to start.',
+      '/update resume — re-fetch resume from Notion\n/set jd <text> — save a job description\n/jd — show stored JD\n/saved — view bookmarked intel\n/clear — reset session',
+    ];
+  }
+
+  if (!hasResume && !hasJD) {
+    // First time user
+    return [
+      'PrepCall — your 30-min-before-a-call lifeline.',
+      'First time? Here\'s how it works:\n\n1️⃣ Connect resume: /update resume\n2️⃣ Paste a JD (I\'ll auto-detect it)\n3️⃣ Get intel: /brief [company] [role]',
+      'Try: /update resume to start.',
+    ];
+  }
+
+  if (!hasResume) {
+    // Has JD but no resume
+    return [
+      'PrepCall — almost ready.',
+      'You have a JD saved but no resume. Send /update resume to connect it.',
+      'Once that\'s done, you can run /brief [company] [role] for full prep.',
+    ];
+  }
+
+  // Has resume but no JD
+  return [
+    'PrepCall — almost ready.',
+    'You have your resume but no JD saved. Paste a job description (I\'ll auto-detect it) or use /set jd.',
+    'Then run /brief [company] [role] to get your intel.',
   ];
 }
 
@@ -113,7 +182,7 @@ export function createReactionHandler(): ReactionHandler {
           .join('\n') || null;
         // Warm the cache for future reactions
         if (resolvedText) {
-          await upsertMessageCache(messageId, chatId, from, resolvedText).catch(() => {});
+          await upsertMessageCache(messageId, chatId, from, resolvedText).catch(() => { });
         }
       }
     }
@@ -190,6 +259,20 @@ export function createWebhookMessageHandler(): MessageHandler {
         }
       }
 
+      if (cmd === '/brief' && !text.trim().startsWith('/')) {
+        const parsed = extractBriefArgsFromText(text);
+        if (parsed) {
+          text = `/brief ${parsed.company}${parsed.role ? ` ${parsed.role}` : ''}`;
+        }
+      }
+
+      if (cmd === '/company' && !text.trim().startsWith('/')) {
+        const company = extractCompanyFromText(text);
+        if (company) {
+          text = `/company ${company}`;
+        }
+      }
+
       if (!cmd && !text.trim().startsWith('/') && company) {
         // If we have an active session and it's not a command, try answering as a question first
         const cache = await getPrepCache(from, company, role);
@@ -209,12 +292,21 @@ export function createWebhookMessageHandler(): MessageHandler {
       }
 
       // ── /help or /start ─────────────────────────────────────────────────
-      if (cmd === '/help' || cmd === '/start') {
+      if (cmd === '/help') {
         for (const bubble of getHelpText()) {
           await sendTracked(chatId, from, bubble, replyTo);
         }
         return;
       }
+
+      if (cmd === '/start') {
+        const helpBubbles = await getStartText(from);
+        for (const bubble of helpBubbles) {
+          await sendTracked(chatId, from, bubble, replyTo);
+        }
+        return;
+      }
+
 
       // ── /update resume ──────────────────────────────────────────────────
       if (cmd === '/update' || cmd === '/update resume') {
@@ -432,7 +524,7 @@ export function createWebhookMessageHandler(): MessageHandler {
         }
 
         // Keep typing indicator alive
-        await startTyping(chatId).catch(() => {});
+        await startTyping(chatId).catch(() => { });
 
         // Send bubbles
         const infoBubbles = companyInfoToBubbles(cache!.companyInfo);
